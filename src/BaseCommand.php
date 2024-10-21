@@ -170,7 +170,7 @@ class BaseCommand extends Command {
    *   Docroot folder location.
    */
   protected function calculateDocrootFolder() {
-    foreach (['docroot', 'web'] as $docrootFolder) {
+    foreach (['docroot', 'web', 'www'] as $docrootFolder) {
       if (file_exists($docrootFolder) && !is_link($docrootFolder)) {
         return $docrootFolder;
       }
@@ -202,7 +202,7 @@ class BaseCommand extends Command {
    *   Relative path of the symlinks.
    */
   protected function getSymlinks() {
-    return ['docroot', 'web', 'public_html'];
+    return ['docroot', 'web', 'public_html', 'www'];
   }
 
   /**
