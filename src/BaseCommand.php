@@ -130,7 +130,7 @@ class BaseCommand extends Command {
    * Assert the script is launched inside a codebase and not in an arbitrary folder.
    */
   protected function assertRootLocation() {
-    if (!file_exists('docroot') && !file_exists('web')) {
+    if (!file_exists('docroot') && !file_exists('web') && !file_exists('web')) {
       throw new \RuntimeException('It seems this command has not been launched the repository root folder. Please run it from root folder.');
     }
 
