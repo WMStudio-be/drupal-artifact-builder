@@ -2,12 +2,8 @@
 
 namespace DrupalArtifactBuilder;
 
-use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
-use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Process\Exception\ProcessFailedException;
-use Symfony\Component\Process\Process;
 
 /**
  * Creates an artifact from a site already that is already setup.
@@ -20,7 +16,6 @@ class DrupalArtifactBuilderCreate extends BaseCommand {
   protected function configure() {
     parent::configure();
     $this->setDescription('Creates an artifact and push the changes to git.');
-    $this->addOption('repository', 'repo', InputOption::VALUE_OPTIONAL);
   }
 
   /**
@@ -32,14 +27,13 @@ class DrupalArtifactBuilderCreate extends BaseCommand {
   }
 
   /**
-   * Generates the artifact
+   * Generates the artifact.
    *
    * @throws \Exception
    */
   protected function generateArtifact() {
     // Create the folder with the artifact.
     $this->createArtifactFolder();
-    $this->assertArtifactContentIsClean();
 
     $this->log('Cleaning previous artifact');
     $this->log('##########################');
@@ -65,7 +59,7 @@ class DrupalArtifactBuilderCreate extends BaseCommand {
       }
     }
 
-    foreach ($this->getExtraPaths() as $path) {
+    foreach ($this->getConfiguration()->getInclude() as $path) {
       $this->copy($path);
     }
 

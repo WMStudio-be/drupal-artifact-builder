@@ -1,0 +1,22 @@
+# repository
+# Repository URL (git SSH / git HTTP URL).
+repository: git@github.com:example/example-artifact.git
+
+# include
+# List of extra files or folders to include into the artifact.
+include: []
+
+# Example of include with files:
+# include:
+#   - solr
+#   - oauth
+
+# author
+# It will be the author used in git commits.
+# author: John Doe <passionate.developer@example.com>
+
+# branch
+# Allow a source branch to be pushed to a specific target branch.
+# Use it only if you need push branches with a different branch name than the source.
+# branches_map:
+#  develop:develop-build
