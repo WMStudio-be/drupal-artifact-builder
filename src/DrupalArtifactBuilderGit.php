@@ -95,6 +95,8 @@ class DrupalArtifactBuilderGit extends BaseCommand {
     $this->runCommand(sprintf('cp -r %s/.git %s/.git', $tmpGit, $artifactPath));
     $this->runCommand(sprintf('rm -rf %s', $tmpGit));
 
+    $this->massageGitIgnore($artifactPath);
+
     $this->log('Git setup complete');
   }
 
@@ -128,6 +130,31 @@ class DrupalArtifactBuilderGit extends BaseCommand {
     }
     else {
       $this->log('No changes to commit!');
+    }
+  }
+
+  /**
+   * Removes .gitignore lines that would exclude the docroot from the artifact.
+   *
+   * @param string $artifactPath
+   *   Absolute path to the artifact folder.
+   */
+  protected function massageGitIgnore(string $artifactPath): void {
+    $gitignorePath = $artifactPath . '/.gitignore';
+    if (!file_exists($gitignorePath)) {
+      return;
+    }
+
+    $docroot = $this->calculateDocrootFolder();
+    $lines = file($gitignorePath, FILE_IGNORE_NEW_LINES);
+    $filtered = array_filter($lines, function (string $line) use ($docroot): bool {
+      $normalized = ltrim(trim($line), '/');
+      return $normalized !== $docroot . '/*';
+    });
+
+    if (count($filtered) !== count($lines)) {
+      $this->log(sprintf('Removing %s exclusion from artifact .gitignore', $docroot));
+      file_put_contents($gitignorePath, implode("\n", $filtered) . "\n");
     }
   }
 
