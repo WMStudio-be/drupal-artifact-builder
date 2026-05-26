@@ -2,6 +2,14 @@
 
 Helps generating artifacts for Drupal by wrapping all code into an artifact, and pushing it to the artifact remote repository.
 
+## Table of contents
+
+- [Installation](#installation)
+- [Usage](#usage)
+- [CI integration](#ci-integration)
+- [Upgrade from 1.x to 2.x](#upgrade-from-1x-to-2x)
+- [Upgrade from 2.x to 3.x](#upgrade-from-2x-to-3x)
+
 ## Installation
 
 ```bash
@@ -139,9 +147,9 @@ A ready-to-use workflow is available at [`examples_ci/github-actions.yml`](examp
     - Update the `branches` list under `on.push` to match the branches you want to deploy.
     - Change the Docker image tag (`php8.3-node20`) to match your PHP and Node versions. Available tags are listed in the [drupal-artifact-builder-docker](https://github.com/metadrop/drupal-artifact-builder-docker) repository.
 
-5. Make sure `.drupal-artifact-builder.yml` exists in your project root and has the `repository` key pointing to the artifact repository.
+**Prerequisites**: Before running the workflow, make sure `.drupal-artifact-builder.yml` is correctly configured in your project root as described in the [Configuration](#configuration) section. At minimum, the `repository` key must point to the artifact repository.
 
-The workflow runs inside the [`ghcr.io/metadrop/drupal-artifact-builder-docker`](https://github.com/metadrop/drupal-artifact-builder-docker) image, which provides PHP, Composer, Node, and Git out of the box.
+The workflow runs inside the [`ghcr.io/metadrop/drupal-artifact-builder-docker`](https://github.com/metadrop/drupal-artifact-builder-docker) image, which provides PHP, Composer, Node, and Git out of the box. You can replace this image with any other, as long as it includes PHP, Composer, and Git.
 
 ## Upgrade from 1.x to 2.x
 
