@@ -131,7 +131,7 @@ drupal-artifact-builder git
 
 ### GitHub Actions
 
-A ready-to-use workflow is available at [`examples_ci/github-actions.yml`](examples_ci/github-actions.yml). Copy it into your Drupal project at `.github/workflows/deploy-artifact.yml` and follow these steps:
+A ready-to-use workflow is available at [`examples/github-actions.yml`](examples/github-actions.yml). Copy it into your Drupal project at `.github/workflows/deploy-artifact.yml` and follow these steps:
 
 1. **Generate an SSH key pair** for the artifact repository:
 
