@@ -181,7 +181,7 @@ class BaseCommand extends Command implements ConfigurableInterface {
    *   When the script is not launched inside a codebase.
    */
   protected function assertRootLocation() {
-    if (!file_exists('docroot') && !file_exists('web')) {
+    if (!file_exists('docroot') && !file_exists('web') && !file_exists('www')) {
       throw new \RuntimeException('It seems this command has not been launched the repository root folder. Please run it from root folder.');
     }
 
@@ -209,7 +209,7 @@ class BaseCommand extends Command implements ConfigurableInterface {
    * @return string
    */
   protected function calculateDocrootFolder() {
-    foreach (['docroot', 'web'] as $docrootFolder) {
+    foreach (['docroot', 'web', 'www'] as $docrootFolder) {
       if (file_exists($docrootFolder) && !is_link($docrootFolder)) {
         return $docrootFolder;
       }
@@ -262,7 +262,7 @@ class BaseCommand extends Command implements ConfigurableInterface {
    *   Relative path of the symlinks.
    */
   protected function getSymlinks() : array {
-    return ['docroot', 'web', 'public_html'];
+    return ['docroot', 'web', 'public_html', 'www'];
   }
 
   /**
