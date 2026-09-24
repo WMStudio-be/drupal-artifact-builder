@@ -19,28 +19,7 @@ class BaseCommand extends Command implements ConfigurableInterface {
 
   protected static $defaultName = 'build';
 
-  const ARTIFACT_FOLDER = 'deploy-artifact';
-
-  const ARTIFACT_REPOSITORY_FOLDER = 'deploy-artifact-repository';
-
-  const FILES_TO_CLEAN = [
-    'CHANGELOG.txt',
-    'COPYRIGHT.txt',
-    'INSTALL.txt',
-    'INSTALL.mysql.txt',
-    'INSTALL.pgsql.txt',
-    'INSTALL.sqlite.txt',
-    'LICENSE.txt',
-    'README.txt',
-    'CHANGELOG.txt',
-    'UPDATE.txt',
-    'USAGE.txt',
-    'PATCHES.txt',
-    '.csslintrc',
-    '.eslintignore',
-    '.eslintrc.json'
-  ];
-
+  const ARTIFACT_REPOSITORY_FOLDER = 'drupal-artifact-builder-repository';
 
   /**
    * Folder with the codebase.
@@ -66,11 +45,13 @@ class BaseCommand extends Command implements ConfigurableInterface {
   /**
    * {@inheritdoc}
    */
-  protected function configure() {
+  protected function configure(): void {
     parent::configure();
     $this->addOption('config', 'c', InputOption::VALUE_REQUIRED, 'The path to the configuration file.', '.drupal-artifact-builder.yml');
     $this->addOption('include', 'i', InputOption::VALUE_OPTIONAL, 'Separated by commas list of files or folders that must be additionally included into the artifact.');
     $this->addOption('repository', 'repo', InputOption::VALUE_OPTIONAL, 'Git repository URL / SSH');
+    $this->addOption('branch', 'b', InputOption::VALUE_REQUIRED, 'Branch to checkout for the artifact.');
+    $this->addOption('artifact-folder', NULL, InputOption::VALUE_REQUIRED, 'Destination folder for the artifact.', ConfigInterface::DEFAULT_ARTIFACT_FOLDER);
   }
 
   /**
@@ -90,8 +71,7 @@ class BaseCommand extends Command implements ConfigurableInterface {
   /**
    * {@inheritdoc}
    */
-  protected function initialize(InputInterface $input, OutputInterface $output) {
-    // Variables initialization.
+  protected function initialize(InputInterface $input, OutputInterface $output): void {
     $this->output = $output;
     $this->rootFolder = getcwd();
     if (!isset($this->config)) {
@@ -102,16 +82,27 @@ class BaseCommand extends Command implements ConfigurableInterface {
       $this->getConfiguration()->setInclude(explode(', ', $input->getOption('include')));
     }
 
+    if ($input->hasOption('artifact-folder') && $input->getOption('artifact-folder') !== ConfigInterface::DEFAULT_ARTIFACT_FOLDER) {
+      $this->getConfiguration()->setArtifactFolder($input->getOption('artifact-folder'));
+    }
+
     // Assert the site is working okay before starting to create the artifact.
     $this->assertRootLocation();
-    $this->assertArtifactContentIsClean();
   }
 
   /**
-   * Runs a shell command.
+   * Returns the artifact destination folder path relative to root.
+   *
+   * @return string
+   */
+  protected function getArtifactFolder() : string {
+    return $this->getConfiguration()->getArtifactFolder();
+  }
+
+  /**
+   * Runs a shell command from the root folder.
    *
    * @param string $command
-   *   Command.
    *
    * @return \Symfony\Component\Process\Process
    *   It can be used to obtain the command output if needed.
@@ -119,11 +110,34 @@ class BaseCommand extends Command implements ConfigurableInterface {
    * @throws \Symfony\Component\Process\Exception\ProcessFailedException
    *   When the command fails.
    */
-  protected function runCommand(string $command) {
+  protected function runCommand(string $command) : Process {
     $this->log(sprintf('Running shell command: «%s»', $command));
 
     $process = Process::fromShellCommandline($command);
-    $process->setTimeout(300);
+    $process->setTimeout(600);
+    $process->run();
+    if (!$process->isSuccessful()) {
+      throw new ProcessFailedException($process);
+    }
+    return $process;
+  }
+
+  /**
+   * Runs a shell command in a specific directory.
+   *
+   * @param string $command
+   * @param string $folder
+   *   Absolute path of the working directory.
+   *
+   * @return Process
+   *
+   * @throws ProcessFailedException
+   */
+  protected function runCommandInFolder(string $command, string $folder) : Process {
+    $this->log(sprintf('Running in %s: «%s»', $folder, $command));
+
+    $process = Process::fromShellCommandline($command, $folder);
+    $process->setTimeout(600);
     $process->run();
     if (!$process->isSuccessful()) {
       throw new ProcessFailedException($process);
@@ -143,7 +157,6 @@ class BaseCommand extends Command implements ConfigurableInterface {
     if (file_exists($configuration_filepath)) {
       $this->log(sprintf('Configuration file found at %s', $configuration_filepath));
       $config = Config::createFromConfigurationFile($configuration_filepath);
-
     }
     else {
       $this->log(sprintf('No configuration file found at %s. Using command line parameters.', $configuration_filepath));
@@ -156,7 +169,6 @@ class BaseCommand extends Command implements ConfigurableInterface {
    * Logs that will show the user the artifact building progress.
    *
    * @param string $message
-   *   Message.
    */
   protected function log(string $message) {
     $this->output->writeln(sprintf('[-->] %s', $message));
@@ -181,35 +193,6 @@ class BaseCommand extends Command implements ConfigurableInterface {
   }
 
   /**
-   * Assert the repository does not contains changes / untracked files.
-   *
-   * This is only checked in the artifact managed files. Files that are
-   * not added to the artifacct are ignored.
-   *
-   * @throws \Exception
-   */
-  protected function assertArtifactContentIsClean() {
-    $artifact_content = array_unique(array_merge(
-      [$this->calculateDocrootFolder()],
-      $this->getRequiredFiles(),
-      $this->getSymlinks(),
-      $this->getConfiguration()->getInclude(),
-    ));
-
-    if ($this->gitCommandExist() && $this->isGitRepository()) {
-      $files_changed = trim($this->runCommand(sprintf("git status -s %s", implode(' ', $artifact_content)))->getOutput());
-      if (strlen($files_changed > 0)) {
-        $list = implode("\n", array_map(function ($item) {
-          $parts = explode(' ', $item);
-          return $parts[1];
-        }, explode("\n", $files_changed)));
-        throw new \Exception("There are changes in the repository (changed and/or untracked files), please run this artifact generation script with folder tree clean. Files changed:\n$list");
-      }
-    }
-
-  }
-
-  /**
    * Assert the repository is set.
    *
    * @throws \Exception
@@ -224,7 +207,6 @@ class BaseCommand extends Command implements ConfigurableInterface {
    * Calculate where is the docroot folder.
    *
    * @return string
-   *   Docroot folder location.
    */
   protected function calculateDocrootFolder() {
     foreach (['docroot', 'web'] as $docrootFolder) {
@@ -236,12 +218,33 @@ class BaseCommand extends Command implements ConfigurableInterface {
   }
 
   /**
+   * Get the name of the repository branch.
+   *
+   * @param InputInterface $input
+   *
+   * @return string
+   */
+  protected function getBranch(InputInterface $input) : string {
+    $branch_from_input = $input->getOption('branch');
+    if (!empty($branch_from_input)) {
+      return $branch_from_input;
+    }
+
+    $current_branch = trim($this->runCommand('git branch --show-current')->getOutput());
+    if (!empty($current_branch)) {
+      return $current_branch;
+    }
+
+    throw new \RuntimeException("Could not detect a branch. Either you didn't set --branch option or you are in detached mode");
+  }
+
+  /**
    * Get the file or folders that are required to add to the artifact.
    *
    * @return string[]
    *   Relative path.
    */
-  protected function getRequiredFiles() {
+  protected function getRequiredFiles() : array {
     return [
       'config',
       'drush',
@@ -258,7 +261,7 @@ class BaseCommand extends Command implements ConfigurableInterface {
    * @return string[]
    *   Relative path of the symlinks.
    */
-  protected function getSymlinks() {
+  protected function getSymlinks() : array {
     return ['docroot', 'web', 'public_html'];
   }
 

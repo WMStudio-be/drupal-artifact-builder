@@ -2,6 +2,14 @@
 
 Helps generating artifacts for Drupal by wrapping all code into an artifact, and pushing it to the artifact remote repository.
 
+## Table of contents
+
+- [Installation](#installation)
+- [Usage](#usage)
+- [CI integration](#ci-integration)
+- [Upgrade from 1.x to 2.x](#upgrade-from-1x-to-2x)
+- [Upgrade from 2.x to 3.x](#upgrade-from-2x-to-3x)
+
 ## Installation
 
 ```bash
@@ -22,6 +30,15 @@ cp vendor/metadrop/drupal-artifact-builder/.drupal-artifact-builder.yml.dist .dr
 ```
 
 #### Configuration properties
+
+- **commands**: Commands to run inside the artifact folder before packaging.
+
+    Example:
+    ```yaml
+    commands:
+        - composer install --no-dev
+        - cd web/themes/custom/foo/ && npm install && npm run production
+    ```
 
 - **repository**: Repository URL (git SSH / git HTTP URL).
 
@@ -80,6 +97,7 @@ drupal-artifact-builder git
 
 ### Parameters
 
+- **branch**: Branch to create the artifact from / to. Required.
 
 - **config**: Allow setting the configuration file. Defaults to .drupal-artifact-builder.yml
 
@@ -109,6 +127,30 @@ drupal-artifact-builder git
     drupal-artifact-builder --repository git@example.com:example/example.git --include=oauth.json,mycustomapp
     ```
 
+## CI integration
+
+### GitHub Actions
+
+A ready-to-use workflow is available at [`examples/github-actions.yml`](examples/github-actions.yml). Copy it into your Drupal project at `.github/workflows/deploy-artifact.yml` and follow these steps:
+
+1. **Generate an SSH key pair** for the artifact repository:
+
+    ```bash
+    ssh-keygen -t ed25519 -C "artifact-deploy" -f artifact_deploy_key -N ""
+    ```
+
+2. **Add the public key** (`artifact_deploy_key.pub`) as a deploy key with write access in the artifact repository settings (Settings > Deploy keys).
+
+3. **Add the private key** (`artifact_deploy_key`) as a repository secret named `ARTIFACT_DEPLOY_KEY` in the source Drupal repository (Settings > Secrets and variables > Actions).
+
+4. **Adjust the workflow** to your needs:
+    - Update the `branches` list under `on.push` to match the branches you want to deploy.
+    - Change the Docker image tag (`php8.3-node20`) to match your PHP and Node versions. Available tags are listed in the [drupal-artifact-builder-docker](https://github.com/metadrop/drupal-artifact-builder-docker) repository.
+
+**Prerequisites**: Before running the workflow, make sure `.drupal-artifact-builder.yml` is correctly configured in your project root as described in the [Configuration](#configuration) section. At minimum, the `repository` key must point to the artifact repository.
+
+The workflow runs inside the [`ghcr.io/metadrop/drupal-artifact-builder-docker`](https://github.com/metadrop/drupal-artifact-builder-docker) image, which provides PHP, Composer, Node, and Git out of the box. You can replace this image with any other, as long as it includes PHP, Composer, and Git.
+
 ## Upgrade from 1.x to 2.x
 
 2.0.0 release brings breaking changes and the way to use drupal-artifact-builder changes.
@@ -135,7 +177,7 @@ These steps must be followed in order to upgrade to the 2.0.0 version:
    drupal-artifact-builder --include solr
    ```
 
-3. Stop using GIT_BRANCH environment variable, not it is --branch
+3. Stop using GIT_BRANCH environment variable, now it is --branch
 
    Before:
 
@@ -148,3 +190,14 @@ These steps must be followed in order to upgrade to the 2.0.0 version:
    ```bash
    drupal-artifact-builder --branch develop
    ```
+
+## Upgrade from 2.x to 3.x
+
+To be able to bring composer libraries and compile the custom theme, configure `commands` in .drupal-artifact-builder.yml.
+
+    Example:
+    ```yaml
+    commands:
+        - composer install --no-dev
+        - cd web/themes/custom/foo/ && npm install && npm run production
+    ```
