@@ -2,6 +2,7 @@
 
 namespace DrupalArtifactBuilder;
 
+use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -13,30 +14,19 @@ class DrupalArtifactBuilderGit extends BaseCommand {
 
   protected static $defaultName = 'git';
 
-  const GIT_IGNORED_REQUIRED_WEB_FILES = [
-    'index.php',
-    'robots.txt',
-    'autoload.php',
-    'update.php',
-    'web.config',
-    '.htaccess',
-    '.ht.router.php',
-  ];
-
   /**
    * {@inheritdoc}
    */
-  protected function configure() {
+  protected function configure(): void {
     parent::configure();
     $this->setDescription('Commit and push artifact changes to git.');
-    $this->addOption('branch', 'b', InputOption::VALUE_REQUIRED,'Git branch');
-    $this->addOption('author', 'a', InputOption::VALUE_REQUIRED,'Git commit author');
+    $this->addOption('author', 'a', InputOption::VALUE_REQUIRED, 'Git commit author');
   }
 
   /**
    * {@inheritdoc}
    */
-  protected function initialize(InputInterface $input, OutputInterface $output) {
+  protected function initialize(InputInterface $input, OutputInterface $output): void {
     parent::initialize($input, $output);
 
     if (!$this->gitCommandExist()) {
@@ -47,238 +37,136 @@ class DrupalArtifactBuilderGit extends BaseCommand {
     if ($input->hasOption('repository') && !empty($input->getOption('repository'))) {
       $this->config->setRepository($input->getOption('repository'));
     }
+
     $selected_branch = $this->getBranch($input);
     $this->getConfiguration()->setBranch($selected_branch);
     $this->log(sprintf('Source branch: %s', $selected_branch));
     $this->log(sprintf('Target branch: %s', $this->getConfiguration()->getBranch()));
-    $this->assertArtifactExists();
 
     if ($input->hasOption('author') && !empty($input->getOption('author'))) {
       $this->getConfiguration()->setAuthor($input->getOption('author'));
     }
     $this->log(sprintf('Commit author: %s', $this->getConfiguration()->getAuthor()));
 
+    $this->assertArtifactExists();
     $this->assertRepository();
   }
 
   /**
    * {@inheritdoc}
    */
-  protected function execute(InputInterface $input, OutputInterface $output) : int {
+  protected function execute(InputInterface $input, OutputInterface $output): int {
     $this->gitSetup();
     $this->gitCommitPush();
-
-    return 0;
+    return Command::SUCCESS;
   }
 
   /**
-   * Setup the artifact repository so the git changed can be commited and pushed later.
+   * Clones the artifact repository and places its .git into the artifact folder.
    */
   protected function gitSetup() {
     $this->log('Setting up git');
 
-    // Clone the artifact repository and copy the .git into the artifact folder.
-    // This is done after creating the artifact and not before
-    // so there are no residual files, plus giving more options
-    // to create artifacts than pushing the changes to a git repository (s.e.: generating a .tar.gz.).
-
+    $artifactPath = $this->rootFolder . '/' . $this->getArtifactFolder();
     $branch = $this->getConfiguration()->getBranch();
-    $ls_remote = $this->runCommand(sprintf('git ls-remote --heads %s %s', $this->getConfiguration()->getRepository(), $branch));
-    $ls_remote_output = trim($ls_remote->getOutput());
-    $branch_exists = !empty($ls_remote_output);
+    $tmpGit = sys_get_temp_dir() . '/' . static::ARTIFACT_REPOSITORY_FOLDER . '-' . uniqid();
+
+    $ls_remote = $this->runCommand(sprintf(
+      'git ls-remote --heads %s %s',
+      escapeshellarg($this->getConfiguration()->getRepository()),
+      escapeshellarg($branch)
+    ));
+    $branch_exists = !empty(trim($ls_remote->getOutput()));
 
     $this->runCommand(sprintf(
-      'git clone  %s %s --depth 1 %s',
-        $this->getConfiguration()->getRepository(),
-      $branch_exists ? sprintf('--branch %s', $branch) : '',
-      self::ARTIFACT_REPOSITORY_FOLDER)
-    );
+      'git clone %s %s --depth 1 %s',
+      $branch_exists ? sprintf('--branch %s', escapeshellarg($branch)) : '',
+      escapeshellarg($this->getConfiguration()->getRepository()),
+      escapeshellarg($tmpGit)
+    ));
 
-    chdir(self::ARTIFACT_REPOSITORY_FOLDER);
-
-    // Checkout to new branch only when branch does not exists.
     if (!$branch_exists) {
-      $this->runCommand(sprintf('git checkout -b %s', $this->getConfiguration()->getBranch()));
+      $this->runCommandInFolder(
+        sprintf('git checkout -b %s', escapeshellarg($branch)),
+        $tmpGit
+      );
     }
 
-    chdir($this->rootFolder);
+    $this->runCommand(sprintf('cp -r %s/.git %s/.git', $tmpGit, $artifactPath));
+    $this->runCommand(sprintf('rm -rf %s', $tmpGit));
 
-    $this->runCommand(sprintf('cp -r %s/.git %s', self::ARTIFACT_REPOSITORY_FOLDER, SELF::ARTIFACT_FOLDER));
-    $this->runCommand(sprintf('rm -rf %s', self::ARTIFACT_REPOSITORY_FOLDER));
+    $this->massageGitIgnore($artifactPath);
 
-    try {
-      // Add hash.txt file with current source repository hash to know what hash is
-      // deployed in an environment just checking an url.
-      $hash = trim($this->runCommand('git rev-parse HEAD')->getOutput());
-      $this->runCommand(sprintf('echo %s > %s/%s/hash.txt', $hash, self::ARTIFACT_FOLDER, $this->calculateDocrootFolder()));
-      $this->log('Added hash file');
-    }
-    catch (\Exception $e) {
-      throw new \RuntimeException('Could not generate commit hash to place in the artifact folder');
-    }
-
-    $this->generateGitIgnore();
-
-    $this->log('Operation to copy source to artifact repository folder finished successfully');
-
-    chdir(self::ARTIFACT_FOLDER);
-
-    foreach (self::FILES_TO_CLEAN as $file) {
-      $this->cleanFileFromArtifact($file);
-    }
-
-    // Clean markdown files except from drupal contrib modules / themes.
-    // Some modules uses them for hook_help (s.e.: https://drupal.org/markdown).
-    $this->runCommand(sprintf('find . -name "*.md" -maxdepth 2 -exec rm -fr {} +'));
-    $this->runCommand(sprintf('find vendor -name "*.md" -exec rm -fr {} +'));
-
-    // Clean .git folders on contrib modules to avoid git detect them as submodules.
-    $this->runCommand(sprintf('find %s/modules/contrib -name ".git" -exec rm -fr {} +', $this->calculateDocrootFolder()));
-    $this->runCommand(sprintf('find %s/themes/contrib -name ".git" -exec rm -fr {} +', $this->calculateDocrootFolder()));
-    $this->runCommand('find vendor -name ".git" -exec rm -fr {} +');
-
-    chdir($this->rootFolder);
-
-    $this->log('The txt files and .git files have been cleaned up successfully');
+    $this->log('Git setup complete');
   }
 
   /**
-   * Commit and push all the changes.
+   * Commits and pushes all artifact changes.
    */
   protected function gitCommitPush() {
-    chdir(self::ARTIFACT_FOLDER);
-    $this->gitAddFiles();
-    // Check if there are changes to commit.
-    $diff = $this->runCommand('git diff --cached --name-only');
+    $artifactPath = $this->rootFolder . '/' . $this->getArtifactFolder();
+    $branch = $this->getConfiguration()->getBranch();
+
+    $this->runCommandInFolder('git add .', $artifactPath);
+
+    $diff = $this->runCommandInFolder('git diff --cached --name-only', $artifactPath);
     $diff_output = trim($diff->getOutput());
+
     if (!empty($diff_output)) {
       $this->log('Commiting and pushing changes to the artifact repository:');
       $this->log($diff_output);
-      $this->runCommand(sprintf('git commit -m "Artifact commit by artifact generation script" --author="%s"', $this->getConfiguration()->getAuthor()));
-      $this->runCommand(sprintf('git push origin %s', $this->getConfiguration()->getBranch()));
+      $this->runCommandInFolder(
+        sprintf(
+          'git commit -m "Artifact commit by artifact generation script" --author=%s',
+          escapeshellarg($this->getConfiguration()->getAuthor())
+        ),
+        $artifactPath
+      );
+      $this->runCommandInFolder(
+        sprintf('git push origin %s', escapeshellarg($branch)),
+        $artifactPath
+      );
       $this->log('Changes pushed to the artifact repository');
     }
     else {
       $this->log('No changes to commit!');
     }
-    chdir($this->rootFolder);
   }
 
   /**
-   * Add all the files to the git repository.
+   * Removes .gitignore lines that would exclude the docroot from the artifact.
+   *
+   * @param string $artifactPath
+   *   Absolute path to the artifact folder.
    */
-  protected function gitAddFiles() {
-    $this->runCommand('git add .');
+  protected function massageGitIgnore(string $artifactPath): void {
+    $gitignorePath = $artifactPath . '/.gitignore';
+    if (!file_exists($gitignorePath)) {
+      return;
+    }
 
-    $ignored_web_files = array_map(function (string $file) {
-      return sprintf('%s/%s', $this->calculateDocrootFolder(), $file);
-    }, self::GIT_IGNORED_REQUIRED_WEB_FILES);
+    $docroot = $this->calculateDocrootFolder();
+    $lines = file($gitignorePath, FILE_IGNORE_NEW_LINES);
+    $filtered = array_filter($lines, function (string $line) use ($docroot): bool {
+      $normalized = ltrim(trim($line), '/');
+      return $normalized !== $docroot . '/*';
+    });
 
-    foreach (array_unique(array_merge($ignored_web_files, $this->getConfiguration()->getInclude())) as $file) {
-      if (file_exists($file) && !is_link($file)) {
-        $this->runCommand(sprintf('git add -f %s', $file));
-      }
+    if (count($filtered) !== count($lines)) {
+      $this->log(sprintf('Removing %s exclusion from artifact .gitignore', $docroot));
+      file_put_contents($gitignorePath, implode("\n", $filtered) . "\n");
     }
   }
 
   /**
-   * Clean a specific file from the artifact.
-   *
-   * Use this when you copy a folder that contains unneeded files.
-   *
-   * @param string $filename
-   *   File name.
-   */
-  protected function cleanFileFromArtifact(string $filename) {
-    $this->runCommand(sprintf('find . -name "%s" -exec rm {} \;', $filename));
-    $this->log(sprintf('File(s) %s removed or not present in artifact', $filename));
-  }
-
-  /**
-   * Generate git ignore file.
-   */
-  protected function generateGitIgnore() {
-    $docroot_folder = $this->calculateDocrootFolder();
-    $git_ignore = "# Ignore sensitive information.
-/$docroot_folder/sites/*/settings.local.php
-# Ignore local drush settings
-/$docroot_folder/sites/*/local.drush.yml
-# Ignore paths that contain user-generated content.
-/$docroot_folder/sites/*/files
-/private-files/*
-# OS X files.
-.DS_STORE
-.Ds_Store
-.DS_Store
-# Linux files.
-.directory
-# IDE related directories.
-/nbproject/private/
-.idea
-# Database and compressed files.
-*.mysql
-*.sql
-*.gz
-*.zip
-*.rar
-*.7z
-# NPM.
-node_modules/
-.sass-cache
-.cache
-# Test related Reports.
-/reports/behat/errors/*
-/reports/behat/junit/*
-/reports/codereview/*
-/$docroot_folder/sites/default/settings.local.unmanaged.php
-# BackstopJS
-/tests/backstopjs/backstop_data/html_report
-/tests/backstopjs/backstop_data/bitmaps_test
-# Temporary files
-/tmp/*
-# Ignore docker-compose env specific settings.
-/docker-compose.override.yml
-# Ensure .gitkeep files are commited so folder structure get respected.
-!.gitkeep
-# Ignore editor config files.
-/.editorconfig
-/.gitattributes'";
-
-    file_put_contents(sprintf('%s/.gitignore', self::ARTIFACT_FOLDER), $git_ignore);
-  }
-
-  /**
-   * Assert that the artifact exists before generating it.
+   * Assert that the artifact exists before trying to push it.
    *
    * @throws \Exception
    */
   protected function assertArtifactExists() {
-    if (!file_exists(self::ARTIFACT_FOLDER) || count(glob(sprintf('%s/%s', self::ARTIFACT_FOLDER, '*'))) == 0) {
+    if (!file_exists($this->getArtifactFolder()) || count(glob(sprintf('%s/%s', $this->getArtifactFolder(), '*'))) == 0) {
       throw new \Exception('Artifact does not exists');
     }
-  }
-
-  /**
-   * Get the name of the repository branch.
-   *
-   * @param \Symfony\Component\Console\Input\InputInterface
-   *   Shell input, used to get the branch from options.
-   *
-   * @return string
-   *   Branch name.
-   */
-  protected function getBranch(InputInterface $input) {
-    $branch_from_input = $input->getOption('branch');
-    if (!empty($branch_from_input)) {
-      return $branch_from_input;
-    }
-
-    $current_branch = trim($this->runCommand('git branch --show-current')->getOutput());
-    if (!empty($current_branch)) {
-      return $current_branch;
-    }
-
-    throw new \RuntimeException("Could not detect a branch. Either you didn't set --branch option or you are in detached mode");
   }
 
 }
